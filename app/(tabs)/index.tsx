@@ -1,7 +1,7 @@
 import React, { useState, useCallback } from 'react';
 import {
   View, Text, StyleSheet, TouchableOpacity, ScrollView,
-  Platform, ActivityIndicator, Image, Alert
+  Platform, ActivityIndicator, Image
 } from 'react-native';
 import { useRouter } from 'expo-router';
 import * as ImagePicker from 'expo-image-picker';
@@ -27,28 +27,22 @@ export default function ScanScreen() {
   const router = useRouter();
   const [selectedType, setSelectedType] = useState<CollectibleType>('stamp');
   const [pickedImage, setPickedImage] = useState<string | null>(null);
+  const [uiError, setUiError] = useState<string | null>(null);
   const { analyze, isLoading, error: analysisError } = useAIAnalysis();
   const { canScan, scansRemaining, isPremium, incrementScan, FREE_SCANS_LIMIT } = useScanCounter();
   const queryClient = useQueryClient();
 
   const checkAndScan = useCallback((): boolean => {
     if (canScan) return true;
-    Alert.alert(
-      'Scans gratuits épuisés',
-      `Vous avez utilisé vos ${FREE_SCANS_LIMIT} scans gratuits. Passez à un plan Premium pour continuer.`,
-      [
-        { text: 'Plus tard', style: 'cancel' },
-        { text: 'Voir les plans', onPress: () => router.push('/(tabs)/profile') },
-      ]
-    );
+    setUiError(`Vous avez utilisé vos ${FREE_SCANS_LIMIT} scans gratuits. Passez à un plan Premium.`);
     return false;
-  }, [canScan, FREE_SCANS_LIMIT, router]);
+  }, [canScan, FREE_SCANS_LIMIT]);
 
   const handleAnalysis = useCallback(async (imageUri: string, webFile: File | null) => {
+    setUiError(null);
     try {
       const result = await analyze(imageUri, selectedType, webFile);
       if (result) {
-        await incrementScan();
         const { publicUrl, ...scanResult } = result;
         const id = `item_${Date.now()}`;
         const now = new Date().toISOString();
@@ -73,6 +67,7 @@ export default function ScanScreen() {
           createdAt: now,
           updatedAt: now,
         });
+        await incrementScan();
         queryClient.invalidateQueries({ queryKey: ['collection'] });
         router.push(`/result/${id}`);
       }
@@ -80,18 +75,18 @@ export default function ScanScreen() {
       const msg = err?.message || 'Erreur inconnue';
       console.error('[CollectScan] handleAnalysis error:', msg);
       if (msg.includes('401') || msg.includes('Unauthorized') || msg.includes('auth')) {
-        Alert.alert('Erreur d\'authentification', 'Session expirée. Fermez et réouvrez l\'app pour réessayer.');
+        setUiError('Session expirée. Fermez et réouvrez l\'app pour réessayer.');
       } else if (msg.includes('network') || msg.includes('fetch') || msg.includes('Network')) {
-        Alert.alert('Erreur réseau', 'Vérifiez votre connexion internet et réessayez.');
+        setUiError('Vérifiez votre connexion internet et réessayez.');
       } else if (msg.includes('JSON') || msg.includes('parse')) {
-        Alert.alert('Erreur d\'analyse', 'L\'IA a retourné un format inattendu. Réessayez avec une photo plus nette.');
+        setUiError('L\'IA a retourné un format inattendu. Réessayez avec une photo plus nette.');
       } else {
-        Alert.alert('Analyse échouée', `Erreur: ${msg.slice(0, 150)}\n\nVérifiez la photo et réessayez.`);
+        setUiError(`Erreur: ${msg.slice(0, 100)}`);
       }
     } finally {
       setPickedImage(null);
     }
-  }, [selectedType, analyze, router, incrementScan, queryClient]);
+  }, [selectedType, analyze, router, queryClient]);
 
   const pickImage = useCallback(async () => {
     if (!checkAndScan()) return;
@@ -173,6 +168,17 @@ export default function ScanScreen() {
         bounces={false}
         contentContainerStyle={styles.scrollContent}
       >
+        {/* Error Banner */}
+        {uiError && (
+          <View style={styles.errorBanner}>
+            <Ionicons name="alert-circle" size={16} color="#EF4444" />
+            <Text style={styles.errorText}>{uiError}</Text>
+            <TouchableOpacity onPress={() => setUiError(null)} activeOpacity={0.7}>
+              <Ionicons name="close" size={18} color="#EF4444" />
+            </TouchableOpacity>
+          </View>
+        )}
+
         {/* Header */}
         <View style={styles.header}>
           <View>
@@ -327,17 +333,6 @@ export default function ScanScreen() {
           </TouchableOpacity>
         </View>
 
-        {/* Scan Mode Chips */}
-        <View style={styles.modesRow}>
-          <View style={[styles.modeChip, styles.modeChipActive]}>
-            <Ionicons name="camera-outline" size={14} color={colors.primary} />
-            <Text style={styles.modeChipActiveText}>Caméra</Text>
-          </View>
-          <View style={styles.modeChip}>
-            <Ionicons name="qr-code-outline" size={14} color={colors.textTertiary} />
-            <Text style={styles.modeChipText}>QR / Code</Text>
-          </View>
-        </View>
 
         {/* Tips */}
         <View style={styles.tipsContainer}>
@@ -373,6 +368,26 @@ const styles = StyleSheet.create({
   },
   scrollContent: {
     paddingBottom: spacing.xxl,
+  },
+
+  errorBanner: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: spacing.sm,
+    marginHorizontal: spacing.lg,
+    marginTop: spacing.md,
+    paddingHorizontal: spacing.md,
+    paddingVertical: spacing.sm,
+    backgroundColor: '#FEE2E2',
+    borderRadius: borderRadius.lg,
+    borderWidth: 1,
+    borderColor: '#EF4444',
+  },
+  errorText: {
+    flex: 1,
+    fontSize: 13,
+    color: '#EF4444',
+    fontWeight: '500',
   },
 
   // Header
@@ -619,39 +634,6 @@ const styles = StyleSheet.create({
     fontSize: 13,
     fontWeight: '600',
     color: colors.textSecondary,
-  },
-
-  // Scan Mode Chips
-  modesRow: {
-    flexDirection: 'row',
-    paddingHorizontal: spacing.lg,
-    marginTop: spacing.md,
-    gap: spacing.sm,
-  },
-  modeChip: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 5,
-    paddingHorizontal: spacing.md,
-    paddingVertical: spacing.sm,
-    borderRadius: borderRadius.full,
-    borderWidth: 1,
-    borderColor: colors.border,
-    backgroundColor: colors.backgroundSecondary,
-  },
-  modeChipActive: {
-    borderColor: colors.primary,
-    backgroundColor: colors.primaryTint,
-  },
-  modeChipActiveText: {
-    fontSize: 12,
-    fontWeight: '600',
-    color: colors.primary,
-  },
-  modeChipText: {
-    fontSize: 12,
-    fontWeight: '500',
-    color: colors.textTertiary,
   },
 
   // Actions
