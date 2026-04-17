@@ -52,10 +52,11 @@ import Animated, {
 import * as Haptics from 'expo-haptics';
 import { colors, spacing, typography, borderRadius, touchTargets, opacity } from '@/constants/design';
 
-// Safety fallback for touchTargets (should never be needed, but prevents crashes)
-const MIN_TOUCH_TARGET = touchTargets?.minimum ?? 44;
 import { animationTimings } from '@/constants/animations';
 import type { ButtonProps } from './Button.types';
+
+// Safety fallback for touchTargets (should never be needed, but prevents crashes)
+const MIN_TOUCH_TARGET = touchTargets?.minimum ?? 44;
 
 export function Button({
   children,

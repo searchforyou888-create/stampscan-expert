@@ -34,4 +34,6 @@ export interface ScanResult {
   condition: string;
   rarity: string;
   keyFacts: string[];
+  catalogueRef?: string;
+  marketplaces?: string;
 }

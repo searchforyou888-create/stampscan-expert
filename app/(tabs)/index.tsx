@@ -1,7 +1,7 @@
 import React, { useState, useCallback } from 'react';
 import {
-  View, Text, StyleSheet, TouchableOpacity, ScrollView,
-  Platform, ActivityIndicator, Image
+  Alert, View, Text, StyleSheet, TouchableOpacity, ScrollView,
+  Platform, ActivityIndicator, Image, Modal
 } from 'react-native';
 import { useRouter } from 'expo-router';
 import * as ImagePicker from 'expo-image-picker';
@@ -13,7 +13,9 @@ import { colors, spacing, typography, borderRadius, shadows } from '@/constants/
 import { CollectibleType } from '@/types/collection';
 import { useAIAnalysis } from '@/hooks/useAIAnalysis';
 import { useScanCounter } from '@/hooks/useScanCounter';
-import { blink } from '@/lib/blink';
+import { useAuth } from '@/hooks/useAuth';
+import { supabase } from '@/lib/supabase';
+import { ScannerOverlay } from '@/components/ScannerOverlay';
 
 const TYPES: { id: CollectibleType; label: string; icon: keyof typeof Ionicons.glyphMap; color: string }[] = [
   { id: 'stamp', label: 'Timbre', icon: 'mail', color: '#C8973A' },
@@ -28,57 +30,75 @@ export default function ScanScreen() {
   const [selectedType, setSelectedType] = useState<CollectibleType>('stamp');
   const [pickedImage, setPickedImage] = useState<string | null>(null);
   const [uiError, setUiError] = useState<string | null>(null);
-  const { analyze, isLoading, error: analysisError } = useAIAnalysis();
+  const [showScannerModal, setShowScannerModal] = useState(false);
+  const { analyze, isLoading } = useAIAnalysis();
   const { canScan, scansRemaining, isPremium, incrementScan, FREE_SCANS_LIMIT } = useScanCounter();
+  const { user, isOwnerModeActive } = useAuth();
   const queryClient = useQueryClient();
 
   const checkAndScan = useCallback((): boolean => {
     if (canScan) return true;
-    setUiError(`Vous avez utilisé vos ${FREE_SCANS_LIMIT} scans gratuits. Passez à un plan Premium.`);
+    setUiError(
+      isOwnerModeActive
+        ? `Vous avez utilisé vos ${FREE_SCANS_LIMIT} scans proprietaire sur cet appareil.`
+        : `Vous avez utilisé vos ${FREE_SCANS_LIMIT} scans gratuits. Passez à un plan Premium.`
+    );
     return false;
-  }, [canScan, FREE_SCANS_LIMIT]);
+  }, [canScan, FREE_SCANS_LIMIT, isOwnerModeActive]);
 
   const handleAnalysis = useCallback(async (imageUri: string, webFile: File | null) => {
     setUiError(null);
     try {
       const result = await analyze(imageUri, selectedType, webFile);
       if (result) {
-        const { publicUrl, ...scanResult } = result;
-        const id = `item_${Date.now()}`;
+        const { imageUrl, storagePath, ...scanResult } = result;
         const now = new Date().toISOString();
-        await blink.db.collectionItems.create({
-          id,
-          type: scanResult.type,
-          name: scanResult.name,
-          description: scanResult.description,
-          estimatedValueMin: scanResult.estimatedValueMin,
-          estimatedValueMax: scanResult.estimatedValueMax,
-          estimatedValueCurrency: scanResult.currency,
-          confidenceScore: scanResult.confidenceScore,
-          historicalInfo: scanResult.historicalInfo,
-          originCountry: scanResult.originCountry,
-          originYear: scanResult.originYear,
-          imageUrl: publicUrl || imageUri,
-          aiAnalysis: JSON.stringify({
-            condition: scanResult.condition,
-            rarity: scanResult.rarity,
-            keyFacts: scanResult.keyFacts,
-          }),
-          createdAt: now,
-          updatedAt: now,
-        });
+        const { data: createdItem, error: saveError } = await supabase
+          .from('collection_items')
+          .insert({
+            type: scanResult.type,
+            name: scanResult.name,
+            description: scanResult.description,
+            estimated_value_min: scanResult.estimatedValueMin,
+            estimated_value_max: scanResult.estimatedValueMax,
+            estimated_value_currency: scanResult.currency,
+            confidence_score: scanResult.confidenceScore,
+            historical_info: scanResult.historicalInfo,
+            origin_country: scanResult.originCountry,
+            origin_year: scanResult.originYear,
+            image_url: storagePath || imageUrl || imageUri,
+            ai_analysis: JSON.stringify({
+              condition: scanResult.condition,
+              rarity: scanResult.rarity,
+              keyFacts: scanResult.keyFacts,
+            }),
+            catalogue_ref: scanResult.catalogueRef || null,
+            marketplaces: scanResult.marketplaces || null,
+            user_id: isOwnerModeActive ? null : user?.id,
+            created_at: now,
+            updated_at: now,
+          })
+          .select()
+          .single();
+        if (saveError) throw new Error(saveError.message);
         await incrementScan();
         queryClient.invalidateQueries({ queryKey: ['collection'] });
-        router.push(`/result/${id}`);
+        router.push(`/result/${createdItem!.id}`);
       }
     } catch (err: any) {
       const msg = err?.message || 'Erreur inconnue';
       console.error('[CollectScan] handleAnalysis error:', msg);
-      if (msg.includes('401') || msg.includes('Unauthorized') || msg.includes('auth')) {
-        setUiError('Session expirée. Fermez et réouvrez l\'app pour réessayer.');
-      } else if (msg.includes('network') || msg.includes('fetch') || msg.includes('Network')) {
+      if (msg === 'BLINK_AUTH_TIMEOUT' || msg === 'BLINK_AUTH_FAILED') {
+        setUiError('La session de scan n\u2019a pas pu être initialisée. Rechargez puis réessayez.');
+      } else if (msg.includes('UPLOAD_FAILED')) {
+        setUiError('La photo n a pas pu etre envoyee pour analyse. Reessayez avec une image plus legere ou rechargez la page.');
+      } else if (msg === 'AI_QUOTA_EXCEEDED') {
+        setUiError('Le service d analyse est temporairement indisponible. Reessayez dans quelques minutes.');
+      } else if (msg === 'NETWORK_REQUEST_FAILED') {
         setUiError('Vérifiez votre connexion internet et réessayez.');
-      } else if (msg.includes('JSON') || msg.includes('parse')) {
+      } else if (msg.includes('invalid input syntax for type uuid') || msg.includes('uuid')) {
+        setUiError('La sauvegarde de l estimation a echoue a cause d un identifiant invalide. Rechargez puis reessayez.');
+      } else if (msg === 'AI_INVALID_JSON' || msg === 'AI_EMPTY_RESPONSE' || msg === 'AI_REQUEST_FAILED') {
         setUiError('L\'IA a retourné un format inattendu. Réessayez avec une photo plus nette.');
       } else {
         setUiError(`Erreur: ${msg.slice(0, 100)}`);
@@ -86,24 +106,27 @@ export default function ScanScreen() {
     } finally {
       setPickedImage(null);
     }
-  }, [selectedType, analyze, router, queryClient]);
+  }, [selectedType, analyze, isOwnerModeActive, router, queryClient, incrementScan, user?.id]);
+
+  const handleWebFileChange = useCallback(async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    const url = URL.createObjectURL(file);
+    setPickedImage(url);
+    await handleAnalysis(url, file);
+    e.target.value = '';
+  }, [handleAnalysis]);
+
+  const handleWebInputClick = useCallback((e: React.MouseEvent<HTMLInputElement>) => {
+    if (!checkAndScan() || isLoading) {
+      e.preventDefault();
+      e.stopPropagation();
+    }
+  }, [checkAndScan, isLoading]);
 
   const pickImage = useCallback(async () => {
     if (!checkAndScan()) return;
-    if (Platform.OS === 'web') {
-      const input = document.createElement('input');
-      input.type = 'file';
-      input.accept = 'image/*';
-      input.onchange = async (e) => {
-        const file = (e.target as HTMLInputElement).files?.[0];
-        if (!file) return;
-        const url = URL.createObjectURL(file);
-        setPickedImage(url);
-        await handleAnalysis(url, file);
-      };
-      input.click();
-      return;
-    }
+    if (Platform.OS === 'web') return;
 
     const { status } = await ImagePicker.requestMediaLibraryPermissionsAsync();
     if (status !== 'granted') {
@@ -126,23 +149,8 @@ export default function ScanScreen() {
 
   const takePhoto = useCallback(async () => {
     if (!checkAndScan()) return;
-    if (Platform.OS === 'web') {
-      // On mobile web: open native camera via capture attribute
-      // On desktop web: open file picker with camera preference
-      const input = document.createElement('input');
-      input.type = 'file';
-      input.accept = 'image/*';
-      input.setAttribute('capture', 'environment'); // Opens rear camera on mobile
-      input.onchange = async (e) => {
-        const file = (e.target as HTMLInputElement).files?.[0];
-        if (!file) return;
-        const url = URL.createObjectURL(file);
-        setPickedImage(url);
-        await handleAnalysis(url, file);
-      };
-      input.click();
-      return;
-    }
+    if (Platform.OS === 'web') return;
+    setShowScannerModal(false); // Fermer le modal d'abord
     const { status } = await ImagePicker.requestCameraPermissionsAsync();
     if (status !== 'granted') {
       Alert.alert('Permission requise', "Autorisez l'accès à la caméra pour scanner.");
@@ -168,6 +176,29 @@ export default function ScanScreen() {
         bounces={false}
         contentContainerStyle={styles.scrollContent}
       >
+        {/* Paywall — affiché en priorité si plus d'essai */}
+        {!isPremium && scansRemaining === 0 ? (
+          <View style={styles.paywallCard}>
+            <LinearGradient colors={['#1A1A2E', '#2D2D4E']} style={styles.paywallGradient}>
+              <Ionicons name="lock-closed" size={40} color="#FFD60A" />
+              <Text style={styles.paywallTitle}>{isOwnerModeActive ? 'Quota proprietaire atteint' : 'Essais gratuits épuisés'}</Text>
+              <Text style={styles.paywallSubtitle}>
+                {isOwnerModeActive
+                  ? `Vous avez utilisé vos ${FREE_SCANS_LIMIT} scans proprietaire disponibles sur cet appareil.`
+                  : `Vous avez utilisé vos ${FREE_SCANS_LIMIT} analyses gratuites. Passez à Premium pour continuer à scanner.`}
+              </Text>
+              <TouchableOpacity
+                style={styles.paywallBtn}
+                activeOpacity={0.85}
+                onPress={() => router.push('/(tabs)/profile')}
+              >
+                <Ionicons name="star" size={16} color="#1A1A2E" />
+                <Text style={styles.paywallBtnText}>{isOwnerModeActive ? 'Voir le profil' : 'Voir les abonnements'}</Text>
+              </TouchableOpacity>
+            </LinearGradient>
+          </View>
+        ) : null}
+
         {/* Error Banner */}
         {uiError && (
           <View style={styles.errorBanner}>
@@ -188,73 +219,132 @@ export default function ScanScreen() {
           <View style={styles.headerRight}>
             {!isPremium && (
               <TouchableOpacity
-                style={[styles.scanCounterBadge, scansRemaining <= 3 && scansRemaining > 0 && styles.scanCounterWarn, scansRemaining === 0 && styles.scanCounterEmpty]}
+                style={[styles.scanCounterBadge, scansRemaining === 1 && styles.scanCounterWarn, scansRemaining === 0 && styles.scanCounterEmpty]}
                 onPress={() => router.push('/(tabs)/profile')}
                 activeOpacity={0.8}
               >
-                <Ionicons name="scan" size={12} color={scansRemaining === 0 ? '#EF4444' : scansRemaining <= 3 ? '#F59E0B' : colors.primary} />
-                <Text style={[styles.scanCounterText, scansRemaining === 0 && { color: '#EF4444' }, scansRemaining <= 3 && scansRemaining > 0 && { color: '#F59E0B' }]}>
+                <Ionicons name="scan" size={12} color={scansRemaining === 0 ? '#EF4444' : scansRemaining === 1 ? '#F59E0B' : colors.primary} />
+                <Text style={[styles.scanCounterText, scansRemaining === 0 && { color: '#EF4444' }, scansRemaining === 1 && { color: '#F59E0B' }]}>
                   {scansRemaining}/{FREE_SCANS_LIMIT}
                 </Text>
               </TouchableOpacity>
             )}
             <View style={styles.headerBadge}>
-              <Ionicons name="sparkles" size={14} color={colors.primary} />
+              <Ionicons name="sparkles" size={14} color="#1A1A2E" />
               <Text style={styles.headerBadgeText}>IA</Text>
             </View>
           </View>
         </View>
 
         {/* Scanner Area */}
-        <View style={styles.scannerContainer}>
-          <LinearGradient
-            colors={['#1A1A2E', '#2D2D4E']}
-            style={styles.scannerGradient}
-          >
-            {isLoading ? (
-              <View style={styles.loadingContainer}>
-                <View style={styles.loadingIconWrap}>
-                  <ActivityIndicator size="large" color={colors.primary} />
+        {Platform.OS === 'web' ? (
+          <View style={[styles.scannerContainer, isLoading && styles.disabledButton]}>
+            <LinearGradient
+              colors={['#1A1A2E', '#2D2D4E']}
+              style={styles.scannerGradient}
+            >
+              {isLoading ? (
+                <View style={styles.loadingContainer}>
+                  <View style={styles.loadingIconWrap}>
+                    <ActivityIndicator size="large" color={colors.primary} />
+                  </View>
+                  <Text style={styles.loadingText}>Analyse en cours…</Text>
+                  <Text style={styles.loadingSubText}>L&apos;IA examine votre objet</Text>
+                  <View style={styles.loadingDots}>
+                    {[0, 1, 2].map((i) => (
+                      <View key={i} style={[styles.loadingDot, { opacity: 0.4 + i * 0.2 }]} />
+                    ))}
+                  </View>
                 </View>
-                <Text style={styles.loadingText}>Analyse en cours…</Text>
-                <Text style={styles.loadingSubText}>L'IA examine votre objet</Text>
-                <View style={styles.loadingDots}>
-                  {[0, 1, 2].map((i) => (
-                    <View key={i} style={[styles.loadingDot, { opacity: 0.4 + i * 0.2 }]} />
-                  ))}
+              ) : pickedImage ? (
+                <Image source={{ uri: pickedImage }} style={styles.previewImage} resizeMode="contain" />
+              ) : (
+                <View style={styles.scannerFrame}>
+                  <View style={styles.cornerTL} />
+                  <View style={styles.cornerTR} />
+                  <View style={styles.cornerBL} />
+                  <View style={styles.cornerBR} />
+                  <View style={styles.scannerCenter}>
+                    <Ionicons name="scan" size={56} color={colors.primary} style={styles.scanIcon} />
+                    <Text style={styles.scanHintText}>Touchez pour scanner</Text>
+                    <Text style={styles.scanHintSub}>ouvrez directement la caméra</Text>
+                  </View>
                 </View>
-              </View>
-            ) : pickedImage ? (
-              <Image source={{ uri: pickedImage }} style={styles.previewImage} resizeMode="contain" />
-            ) : (
-              <View style={styles.scannerFrame}>
-                {/* Corner brackets */}
-                <View style={styles.cornerTL} />
-                <View style={styles.cornerTR} />
-                <View style={styles.cornerBL} />
-                <View style={styles.cornerBR} />
-                {/* Center content */}
-                <View style={styles.scannerCenter}>
-                  <Ionicons name="scan" size={56} color={colors.primary} style={styles.scanIcon} />
-                  <Text style={styles.scanHintText}>Pointez votre caméra</Text>
-                  <Text style={styles.scanHintSub}>sur l'objet de collection</Text>
-                </View>
+              )}
+            </LinearGradient>
+            <input
+              type="file"
+              accept="image/*"
+              capture="environment"
+              onClick={handleWebInputClick as any}
+              onChange={handleWebFileChange as any}
+              disabled={isLoading}
+              aria-label="Zone de scan principale"
+              style={styles.webInputOverlay as any}
+            />
+
+            {selectedTypeData && (
+              <View style={[styles.typeBadge, { backgroundColor: selectedTypeData.color }]}> 
+                <Ionicons name={selectedTypeData.icon} size={12} color="#FFF" />
+                <Text style={styles.typeBadgeText}>{selectedTypeData.label}</Text>
               </View>
             )}
-          </LinearGradient>
+          </View>
+        ) : (
+          <TouchableOpacity
+            style={[styles.scannerContainer, isLoading && styles.disabledButton]}
+            onPress={() => setShowScannerModal(true)}
+            disabled={isLoading}
+            activeOpacity={0.9}
+            accessibilityRole="button"
+            accessibilityLabel="Zone de scan principale"
+          >
+            <LinearGradient
+              colors={['#1A1A2E', '#2D2D4E']}
+              style={styles.scannerGradient}
+            >
+              {isLoading ? (
+                <View style={styles.loadingContainer}>
+                  <View style={styles.loadingIconWrap}>
+                    <ActivityIndicator size="large" color={colors.primary} />
+                  </View>
+                  <Text style={styles.loadingText}>Analyse en cours…</Text>
+                  <Text style={styles.loadingSubText}>L&apos;IA examine votre objet</Text>
+                  <View style={styles.loadingDots}>
+                    {[0, 1, 2].map((i) => (
+                      <View key={i} style={[styles.loadingDot, { opacity: 0.4 + i * 0.2 }]} />
+                    ))}
+                  </View>
+                </View>
+              ) : pickedImage ? (
+                <Image source={{ uri: pickedImage }} style={styles.previewImage} resizeMode="contain" />
+              ) : (
+                <View style={styles.scannerFrame}>
+                  <View style={styles.cornerTL} />
+                  <View style={styles.cornerTR} />
+                  <View style={styles.cornerBL} />
+                  <View style={styles.cornerBR} />
+                  <View style={styles.scannerCenter}>
+                    <Ionicons name="scan" size={56} color={colors.primary} style={styles.scanIcon} />
+                    <Text style={styles.scanHintText}>Touchez pour scanner</Text>
+                    <Text style={styles.scanHintSub}>ouvrez directement la caméra</Text>
+                  </View>
+                </View>
+              )}
+            </LinearGradient>
 
-          {/* Type badge overlay */}
-          {selectedTypeData && (
-            <View style={[styles.typeBadge, { backgroundColor: selectedTypeData.color }]}>
-              <Ionicons name={selectedTypeData.icon} size={12} color="#FFF" />
-              <Text style={styles.typeBadgeText}>{selectedTypeData.label}</Text>
-            </View>
-          )}
-        </View>
+            {selectedTypeData && (
+              <View style={[styles.typeBadge, { backgroundColor: selectedTypeData.color }]}> 
+                <Ionicons name={selectedTypeData.icon} size={12} color="#FFF" />
+                <Text style={styles.typeBadgeText}>{selectedTypeData.label}</Text>
+              </View>
+            )}
+          </TouchableOpacity>
+        )}
 
         {/* Type Selector */}
         <View style={styles.section}>
-          <Text style={styles.sectionTitle}>Type d'objet</Text>
+          <Text style={styles.sectionTitle}>Type d&apos;objet</Text>
           <ScrollView
             horizontal
             showsHorizontalScrollIndicator={false}
@@ -295,42 +385,58 @@ export default function ScanScreen() {
 
         {/* Action Buttons */}
         <View style={styles.actionsContainer}>
-          {/* Primary: Camera / Import */}
           <TouchableOpacity
-            style={[styles.primaryButton, isLoading && styles.disabledButton]}
-            onPress={takePhoto}
-            disabled={isLoading}
+            style={styles.primaryButton}
+            onPress={() => router.push('/(tabs)/catalogue')}
             activeOpacity={0.85}
             accessibilityRole="button"
-            accessibilityLabel="Scanner avec la caméra"
+            accessibilityLabel="Faire expertiser un objet"
           >
             <LinearGradient
-              colors={['#E8B86D', '#C8973A', '#A67A28']}
+                colors={['#2D9B6F', '#1F7A5A', '#15533E']}
               start={{ x: 0, y: 0 }}
               end={{ x: 1, y: 1 }}
               style={styles.primaryButtonGradient}
             >
-              <Ionicons name="camera" size={26} color="#FFF" />
+              <Ionicons name="shield-checkmark" size={24} color="#FFF" />
               <Text style={styles.primaryButtonText}>
-                Scanner avec la caméra
+                Faire expertiser
               </Text>
             </LinearGradient>
           </TouchableOpacity>
 
           {/* Secondary: Gallery / File upload */}
-          <TouchableOpacity
-            style={[styles.secondaryButton, isLoading && styles.disabledButton]}
-            onPress={pickImage}
-            disabled={isLoading}
-            activeOpacity={0.8}
-            accessibilityRole="button"
-            accessibilityLabel="Depuis la galerie"
-          >
-            <Ionicons name="images-outline" size={20} color={colors.primary} />
-            <Text style={styles.secondaryButtonText}>
-              Importer une photo
-            </Text>
-          </TouchableOpacity>
+          {Platform.OS === 'web' ? (
+            <View style={[styles.secondaryButton, isLoading && styles.disabledButton]}>
+              <Ionicons name="images-outline" size={20} color={colors.primary} />
+              <Text style={styles.secondaryButtonText}>
+                Importer une photo
+              </Text>
+              <input
+                type="file"
+                accept="image/*"
+                onClick={handleWebInputClick as any}
+                onChange={handleWebFileChange as any}
+                disabled={isLoading}
+                aria-label="Depuis la galerie"
+                style={styles.webInputOverlay as any}
+              />
+            </View>
+          ) : (
+            <TouchableOpacity
+              style={[styles.secondaryButton, isLoading && styles.disabledButton]}
+              onPress={pickImage}
+              disabled={isLoading}
+              activeOpacity={0.8}
+              accessibilityRole="button"
+              accessibilityLabel="Depuis la galerie"
+            >
+              <Ionicons name="images-outline" size={20} color={colors.primary} />
+              <Text style={styles.secondaryButtonText}>
+                Importer une photo
+              </Text>
+            </TouchableOpacity>
+          )}
         </View>
 
 
@@ -354,6 +460,36 @@ export default function ScanScreen() {
           ))}
         </View>
       </ScrollView>
+
+      {/* Scanner Modal Futuriste */}
+      <Modal
+        visible={showScannerModal}
+        animationType="fade"
+        transparent={false}
+      >
+        <View style={{ flex: 1, backgroundColor: '#000' }}>
+          <ScannerOverlay
+            onCapture={takePhoto}
+            isLoading={isLoading}
+            type={selectedType}
+          />
+
+          {/* Bouton Fermer */}
+          <TouchableOpacity
+            style={styles.modalCloseButton}
+            onPress={() => setShowScannerModal(false)}
+            activeOpacity={0.8}
+          >
+            <Ionicons name="close" size={24} color="white" />
+          </TouchableOpacity>
+
+          {/* Indicateur Flash */}
+          <View style={styles.flashIndicator}>
+            <Ionicons name="flash-off" size={16} color="rgba(255,255,255,0.7)" />
+            <Text style={styles.flashText}>Flash: Off</Text>
+          </View>
+        </View>
+      </Modal>
     </SafeAreaView>
   );
 }
@@ -421,9 +557,9 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
     gap: 3,
-    backgroundColor: colors.primaryTint,
+    backgroundColor: colors.secondary,
     borderWidth: 1,
-    borderColor: colors.border,
+    borderColor: 'rgba(255,214,10,0.4)',
     borderRadius: borderRadius.full,
     paddingHorizontal: spacing.sm,
     paddingVertical: 4,
@@ -439,23 +575,21 @@ const styles = StyleSheet.create({
   scanCounterText: {
     fontSize: 11,
     fontWeight: '700',
-    color: colors.primary,
+    color: '#FFD60A',
   },
   headerBadge: {
     flexDirection: 'row',
     alignItems: 'center',
     gap: 4,
-    backgroundColor: colors.primaryTint,
-    borderWidth: 1,
-    borderColor: colors.border,
+    backgroundColor: '#FFD60A',
     borderRadius: borderRadius.full,
     paddingHorizontal: spacing.sm,
     paddingVertical: 4,
   },
   headerBadgeText: {
     fontSize: 11,
-    fontWeight: '700',
-    color: colors.primary,
+    fontWeight: '800',
+    color: '#1A1A2E',
     letterSpacing: 0.5,
   },
 
@@ -467,7 +601,7 @@ const styles = StyleSheet.create({
     ...shadows.lg,
   },
   scannerGradient: {
-    height: 250,
+    height: 228,
     justifyContent: 'center',
     alignItems: 'center',
   },
@@ -491,7 +625,7 @@ const styles = StyleSheet.create({
     height: CORNER_SIZE,
     borderTopWidth: CORNER_WIDTH,
     borderLeftWidth: CORNER_WIDTH,
-    borderColor: '#C8973A',
+    borderColor: '#FFD60A',
     borderTopLeftRadius: 5,
   },
   cornerTR: {
@@ -502,7 +636,7 @@ const styles = StyleSheet.create({
     height: CORNER_SIZE,
     borderTopWidth: CORNER_WIDTH,
     borderRightWidth: CORNER_WIDTH,
-    borderColor: '#C8973A',
+    borderColor: '#FFD60A',
     borderTopRightRadius: 5,
   },
   cornerBL: {
@@ -513,7 +647,7 @@ const styles = StyleSheet.create({
     height: CORNER_SIZE,
     borderBottomWidth: CORNER_WIDTH,
     borderLeftWidth: CORNER_WIDTH,
-    borderColor: '#C8973A',
+    borderColor: '#FFD60A',
     borderBottomLeftRadius: 5,
   },
   cornerBR: {
@@ -524,11 +658,11 @@ const styles = StyleSheet.create({
     height: CORNER_SIZE,
     borderBottomWidth: CORNER_WIDTH,
     borderRightWidth: CORNER_WIDTH,
-    borderColor: '#C8973A',
+    borderColor: '#FFD60A',
     borderBottomRightRadius: 5,
   },
   scanHintText: {
-    color: '#E8B86D',
+    color: '#FFD60A',
     fontSize: 13,
     fontWeight: '600',
     marginTop: spacing.sm,
@@ -554,12 +688,12 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
     alignItems: 'center',
     borderRadius: borderRadius.full,
-    backgroundColor: 'rgba(200, 151, 58, 0.12)',
+    backgroundColor: 'rgba(255,214,10,0.12)',
     borderWidth: 1,
-    borderColor: 'rgba(200, 151, 58, 0.3)',
+    borderColor: 'rgba(255,214,10,0.35)',
   },
   loadingText: {
-    color: '#E8B86D',
+    color: '#FFD60A',
     fontSize: 16,
     fontWeight: '600',
     marginTop: spacing.xs,
@@ -602,7 +736,7 @@ const styles = StyleSheet.create({
   // Section
   section: {
     paddingHorizontal: spacing.lg,
-    marginTop: spacing.lg,
+    marginTop: spacing.md,
   },
   sectionTitle: {
     ...typography.captionBold,
@@ -639,10 +773,11 @@ const styles = StyleSheet.create({
   // Actions
   actionsContainer: {
     paddingHorizontal: spacing.lg,
-    marginTop: spacing.lg,
+    marginTop: spacing.md,
     gap: spacing.sm,
   },
   primaryButton: {
+    position: 'relative',
     borderRadius: borderRadius.xl,
     overflow: 'hidden',
     ...shadows.md,
@@ -663,24 +798,32 @@ const styles = StyleSheet.create({
     letterSpacing: 0.3,
   },
   secondaryButton: {
+    position: 'relative',
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'center',
     gap: spacing.sm,
     paddingVertical: spacing.md,
     borderRadius: borderRadius.xl,
-    borderWidth: 1.5,
-    borderColor: colors.primary,
-    backgroundColor: colors.primaryTint,
+    borderWidth: 0,
+    backgroundColor: colors.secondary,
     minHeight: 48,
   },
   secondaryButtonText: {
-    color: colors.primary,
+    color: '#FFD60A',
     fontSize: 15,
-    fontWeight: '600',
+    fontWeight: '700',
   },
   disabledButton: {
     opacity: 0.55,
+  },
+  webInputOverlay: {
+    position: 'absolute',
+    inset: 0,
+    width: '100%',
+    height: '100%',
+    opacity: 0,
+    cursor: 'pointer',
   },
 
   // Tips
@@ -712,7 +855,7 @@ const styles = StyleSheet.create({
     width: 28,
     height: 28,
     borderRadius: borderRadius.sm,
-    backgroundColor: colors.primaryTint,
+    backgroundColor: colors.secondary,
     justifyContent: 'center',
     alignItems: 'center',
   },
@@ -720,5 +863,79 @@ const styles = StyleSheet.create({
     ...typography.small,
     color: colors.textSecondary,
     flex: 1,
+  },
+
+  // Paywall
+  paywallCard: {
+    marginHorizontal: spacing.lg,
+    marginBottom: spacing.md,
+    borderRadius: borderRadius.xl,
+    overflow: 'hidden',
+    ...shadows.md,
+  },
+  paywallGradient: {
+    padding: spacing.xl,
+    alignItems: 'center',
+    gap: spacing.md,
+  },
+  paywallTitle: {
+    fontSize: 20,
+    fontWeight: '800',
+    color: '#FFD60A',
+    textAlign: 'center',
+  },
+  paywallSubtitle: {
+    fontSize: 14,
+    color: '#8B7E9E',
+    textAlign: 'center',
+    lineHeight: 20,
+  },
+  paywallBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: spacing.sm,
+    backgroundColor: '#FFD60A',
+    paddingHorizontal: spacing.xl,
+    paddingVertical: spacing.md,
+    borderRadius: borderRadius.full,
+    marginTop: spacing.sm,
+  },
+  paywallBtnText: {
+    color: '#1A1A2E',
+    fontWeight: '800',
+    fontSize: 15,
+  },
+
+  // Scanner Modal
+  modalCloseButton: {
+    position: 'absolute',
+    top: 40,
+    right: 20,
+    backgroundColor: 'rgba(0, 0, 0, 0.5)',
+    width: 44,
+    height: 44,
+    borderRadius: 22,
+    justifyContent: 'center',
+    alignItems: 'center',
+    zIndex: 100,
+  },
+
+  flashIndicator: {
+    position: 'absolute',
+    bottom: 30,
+    left: 20,
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+    backgroundColor: 'rgba(0, 0, 0, 0.5)',
+    paddingHorizontal: 12,
+    paddingVertical: 8,
+    borderRadius: 20,
+  },
+
+  flashText: {
+    color: 'rgba(255, 255, 255, 0.7)',
+    fontSize: 12,
+    fontWeight: '500',
   },
 });

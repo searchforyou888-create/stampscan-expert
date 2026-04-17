@@ -22,26 +22,26 @@
 // ============================================================================
 
 export const colors = {
-  // Brand - Warm Gold (collector/antique feel)
-  primary: '#C8973A',
-  primaryDark: '#A67A28',
-  primaryLight: '#E8B86D',
-  primaryTint: '#FDF3E3',
+  // Brand - Jaune vif
+  primary: '#FFD60A',
+  primaryDark: '#E6BE00',
+  primaryLight: '#FFE449',
+  primaryTint: '#FFFBE6',
 
   secondary: '#1A1A2E',
   secondaryDark: '#0D0D1A',
   secondaryLight: '#2D2D4E',
-  secondaryTint: '#F5F0E8',
+  secondaryTint: '#F8F8F0',
 
-  accent: '#E8B86D',
-  accentDark: '#C8973A',
-  accentLight: '#F5D49A',
-  accentTint: '#FEFAEF',
+  accent: '#FFD60A',
+  accentDark: '#E6BE00',
+  accentLight: '#FFE449',
+  accentTint: '#FFFBE6',
 
   // Backgrounds
-  background: '#F5F0E8',
-  backgroundSecondary: '#EDE6D8',
-  backgroundTertiary: '#E2D9C8',
+  background: '#F8F8F2',
+  backgroundSecondary: '#F0F0E8',
+  backgroundTertiary: '#E8E8E0',
 
   // Dark Mode
   backgroundDark: '#0D0D1A',

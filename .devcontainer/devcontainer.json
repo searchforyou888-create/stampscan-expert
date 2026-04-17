@@ -1,0 +1,17 @@
+{
+  "name": "CollectScan Dev",
+  "forwardPorts": [3000, 3001],
+  "portsAttributes": {
+    "3000": {
+      "label": "Expo Web",
+      "onAutoForward": "openBrowser",
+      "visibility": "public"
+    },
+    "3001": {
+      "label": "Claude Proxy",
+      "onAutoForward": "silent",
+      "visibility": "public"
+    }
+  },
+  "postStartCommand": "node /workspaces/stampscan-expert/backend/proxy.js &"
+}
