@@ -7,6 +7,8 @@ import { ImageSourcePropType, ViewStyle } from 'react-native';
 
 export type CardVariant = 'flat' | 'elevated' | 'outlined';
 
+import type { RarityLevel } from '../Badge/Badge';
+
 export interface CardProps {
   /**
    * Card content
@@ -33,6 +35,11 @@ export interface CardProps {
    * Test ID for automated testing
    */
   testID?: string;
+
+  /**
+   * Rareté de l'objet (pour badge)
+   */
+  rarity?: RarityLevel;
 }
 
 export interface CardHeaderProps {

@@ -1,6 +1,5 @@
 import React, { useState, useEffect } from 'react';
 import { View, Text, TextInput, TouchableOpacity, StyleSheet, Platform } from 'react-native';
-import { LinearGradient } from 'expo-linear-gradient';
 import { Ionicons } from '@expo/vector-icons';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 
@@ -14,15 +13,19 @@ export default function PasswordGate({ children }: { children: React.ReactNode }
   const [checking, setChecking] = useState(true);
 
   useEffect(() => {
-    AsyncStorage.getItem(STORAGE_KEY).then((val) => {
-      if (val === 'ok') setAuthenticated(true);
+    try {
+      AsyncStorage.getItem(STORAGE_KEY).then((val) => {
+        if (val === 'ok') setAuthenticated(true);
+        setChecking(false);
+      }).catch(() => setChecking(false));
+    } catch {
       setChecking(false);
-    }).catch(() => setChecking(false));
+    }
   }, []);
 
   const handleSubmit = () => {
     if (code.trim() === ACCESS_CODE) {
-      AsyncStorage.setItem(STORAGE_KEY, 'ok');
+      try { AsyncStorage.setItem(STORAGE_KEY, 'ok'); } catch {}
       setAuthenticated(true);
       setError(false);
     } else {
@@ -30,11 +33,15 @@ export default function PasswordGate({ children }: { children: React.ReactNode }
     }
   };
 
-  if (checking) return null;
+  if (checking) return (
+    <View style={s.container}>
+      <Text style={{ color: '#FFD60A', fontSize: 18 }}>Chargement...</Text>
+    </View>
+  );
   if (authenticated) return <>{children}</>;
 
   return (
-    <LinearGradient colors={['#0D0D1A', '#1A1A2E', '#2D2D4E']} style={s.container}>
+    <View style={s.container}>
       <View style={s.card}>
         <View style={s.iconWrap}>
           <Ionicons name="lock-closed" size={36} color="#FFD60A" />
@@ -59,12 +66,12 @@ export default function PasswordGate({ children }: { children: React.ReactNode }
           <Text style={s.buttonText}>Entrer</Text>
         </TouchableOpacity>
       </View>
-    </LinearGradient>
+    </View>
   );
 }
 
 const s = StyleSheet.create({
-  container: { flex: 1, alignItems: 'center', justifyContent: 'center', padding: 24 },
+  container: { flex: 1, alignItems: 'center', justifyContent: 'center', padding: 24, backgroundColor: '#0D0D1A', minHeight: '100%' as any },
   card: {
     width: '100%',
     maxWidth: 360,

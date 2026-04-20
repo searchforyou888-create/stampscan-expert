@@ -10,7 +10,10 @@ module.exports = function (api) {
         },
       ],
     ],
-    plugins: ['react-native-worklets/plugin'],
+    plugins: [
+      // react-native-worklets/plugin disabled for web compatibility
+      // 'react-native-worklets/plugin',
+    ],
   };
 };
 

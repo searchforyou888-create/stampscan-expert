@@ -4,6 +4,8 @@ import {
   Image, RefreshControl, TextInput, Alert, Platform,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
+import { Card } from '@/components/ui/Card';
+import { Badge, RarityLevel } from '@/components/ui/Badge';
 import { useRouter } from 'expo-router';
 import { Ionicons } from '@expo/vector-icons';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
@@ -127,6 +129,10 @@ export default function CatalogueScreen() {
 
   return (
     <SafeAreaView style={styles.container} edges={['top']}>
+      <View style={{ backgroundColor: '#FFD60A', padding: 8 }}>
+        <Text style={{ color: '#1A1A2E', fontWeight: 'bold' }}>DEBUG: myItems.length = {myItems.length}</Text>
+        <Text style={{ color: '#1A1A2E', fontSize: 10 }} numberOfLines={2}>{JSON.stringify(myItems)}</Text>
+      </View>
       {/* Debug Panel */}
       <View style={{ backgroundColor: '#1a1a2e', paddingHorizontal: 12, paddingVertical: 8, borderBottomWidth: 1, borderBottomColor: '#2d2d4e' }}>
         <Text style={{ color: '#FFD60A', fontSize: 10, fontWeight: 'bold' }}>
@@ -218,22 +224,46 @@ export default function CatalogueScreen() {
           ListEmptyComponent={!myLoading ? <EmptyState search={search} mode="collection" /> : null}
           columnWrapperStyle={styles.columnWrapper}
           renderItem={({ item }: { item: any }) => (
-            <TouchableOpacity
-              style={styles.itemCard}
-              activeOpacity={0.85}
+            <Card
+              variant="elevated"
+              rarity={mapRarity(item.rarity)}
+              style={{ margin: 6 }}
               onPress={() => router.push(`/result/${item.id}`)}
-              onLongPress={() => handleDelete(item.id, item.name || '')}
+              testID={`card-${item.id}`}
             >
-              {item.image_url ? (
-                <Image source={{ uri: item.image_url }} style={styles.itemImage} resizeMode="cover" />
-              ) : (
-                <View style={[styles.itemImagePlaceholder, { backgroundColor: (TYPE_COLORS[item.type || ''] || colors.primary) + '22' }]}>
-                  <Ionicons name="image-outline" size={28} color={TYPE_COLORS[item.type || ''] || colors.primary} />
-                </View>
-              )}
-              <View style={styles.itemInfo}>
-                <View style={[styles.typeDot, { backgroundColor: TYPE_COLORS[item.type || ''] || colors.primary }]} />
-                <Text style={styles.itemName} numberOfLines={2}>{item.name}</Text>
+              <View style={{ alignItems: 'center', marginTop: 18, marginBottom: 8 }}>
+                {item.image_url ? (
+                  <Image
+                    source={{ uri: item.image_url }}
+                    style={{ width: 90, height: 90, borderRadius: 45, backgroundColor: '#F0F0E8', borderWidth: 2, borderColor: '#FFF', overflow: 'hidden' }}
+                    resizeMode="cover"
+                  />
+                ) : (
+                  <View style={[styles.itemImagePlaceholder, { width: 90, height: 90, borderRadius: 45, backgroundColor: (TYPE_COLORS[item.type || ''] || colors.primary) + '22', alignItems: 'center', justifyContent: 'center' }]}> 
+                    <Ionicons name="image-outline" size={32} color={TYPE_COLORS[item.type || ''] || colors.primary} />
+                  </View>
+                )}
+                {/* Score de confiance IA si présent */}
+                {item.ai_confidence && (
+                  <View style={{ position: 'absolute', bottom: -10, left: '50%', transform: [{ translateX: -36 }], backgroundColor: '#FFD60A', borderRadius: 18, paddingHorizontal: 10, paddingVertical: 2, shadowColor: '#FFD60A', shadowOpacity: 0.3, shadowRadius: 6, elevation: 4 }}>
+                    <Text style={{ color: '#1A1A2E', fontWeight: 'bold', fontSize: 12 }}>{Math.round(item.ai_confidence * 100)}% Match</Text>
+                  </View>
+                )}
+              </View>
+              <Card.Header>
+                <Text style={{ fontWeight: 'bold', fontSize: 15, color: '#1A1A2E' }} numberOfLines={1}>{item.name}</Text>
+                <Text style={{ color: '#8B7E9E', fontSize: 12, marginTop: 2 }}>{item.origin_year || ''}</Text>
+              </Card.Header>
+              <Card.Content>
+                {item.estimated_value_min != null && (
+                  <Text style={styles.itemValue}>
+                    {Number(item.estimated_value_min).toFixed(0)}–{Number(item.estimated_value_max).toFixed(0)} {item.estimated_value_currency}
+                  </Text>
+                )}
+                {item.origin_country ? (
+                  <Text style={styles.itemMeta}>{item.origin_country}</Text>
+                ) : null}
+                {/* Badge expert si vérifié */}
                 {item.expert_verification_status && item.expert_verification_status !== 'none' ? (
                   <View
                     style={[
@@ -256,16 +286,8 @@ export default function CatalogueScreen() {
                     </Text>
                   </View>
                 ) : null}
-                {item.estimated_value_min != null && (
-                  <Text style={styles.itemValue}>
-                    {Number(item.estimated_value_min).toFixed(0)}&ndash;{Number(item.estimated_value_max).toFixed(0)} {item.estimated_value_currency}
-                  </Text>
-                )}
-                {item.origin_country ? (
-                  <Text style={styles.itemMeta}>{item.origin_country} · {item.origin_year}</Text>
-                ) : null}
-              </View>
-            </TouchableOpacity>
+              </Card.Content>
+            </Card>
           )}
         />
       ) : (

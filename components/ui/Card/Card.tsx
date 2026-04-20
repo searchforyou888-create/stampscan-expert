@@ -54,13 +54,13 @@ import Animated, {
 import * as Haptics from 'expo-haptics';
 import { colors, spacing, shadows, borderRadius } from '@/constants/design';
 import { animationTimings } from '@/constants/animations';
-import type {
   CardProps,
   CardHeaderProps,
   CardImageProps,
   CardContentProps,
   CardFooterProps,
 } from './Card.types';
+import { Badge } from '../Badge/Badge';
 
 // ============================================================================
 // Main Card Component
@@ -72,6 +72,7 @@ export function Card({
   onPress,
   style,
   testID,
+  rarity,
 }: CardProps) {
   const scale = useSharedValue(1);
 
@@ -107,9 +108,22 @@ export function Card({
       ]}
       testID={testID}
     >
+      {/* Badge de rareté en position absolue en haut à droite */}
+      {rarity && (
+        <View style={styles.rarityBadgeContainer} pointerEvents="none">
+          <Badge level={rarity} />
+        </View>
+      )}
       {children}
     </View>
   );
+// Badge container absolute
+  rarityBadgeContainer: {
+    position: 'absolute',
+    top: 12,
+    right: 12,
+    zIndex: 10,
+  },
 
   if (onPress) {
     return (
@@ -204,8 +218,11 @@ const styles = StyleSheet.create({
   // Base card styles
   card: {
     backgroundColor: colors.background,
-    borderRadius: borderRadius.lg,
+    borderRadius: 25,
     overflow: 'hidden',
+    shadowOpacity: 0.2,
+    shadowRadius: 10,
+    ...shadows.lg,
   },
 
   // Variant: Flat (no shadow, no border)
@@ -236,11 +253,14 @@ const styles = StyleSheet.create({
   image: {
     width: '100%',
     backgroundColor: colors.backgroundSecondary,
+    borderTopLeftRadius: 25,
+    borderTopRightRadius: 25,
+    overflow: 'hidden',
   },
 
   imageRounded: {
-    borderTopLeftRadius: borderRadius.lg,
-    borderTopRightRadius: borderRadius.lg,
+    borderTopLeftRadius: 25,
+    borderTopRightRadius: 25,
   },
 
   // Content
