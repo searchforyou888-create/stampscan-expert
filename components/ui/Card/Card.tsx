@@ -54,13 +54,7 @@ import Animated, {
 import * as Haptics from 'expo-haptics';
 import { colors, spacing, shadows, borderRadius } from '@/constants/design';
 import { animationTimings } from '@/constants/animations';
-import {
-  CardProps,
-  CardHeaderProps,
-  CardImageProps,
-  CardContentProps,
-  CardFooterProps,
-} from './Card.types';
+import type { CardProps } from './Card.types';
 import { Badge } from '../Badge/Badge';
 
 // ============================================================================
