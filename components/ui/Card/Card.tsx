@@ -54,6 +54,7 @@ import Animated, {
 import * as Haptics from 'expo-haptics';
 import { colors, spacing, shadows, borderRadius } from '@/constants/design';
 import { animationTimings } from '@/constants/animations';
+import {
   CardProps,
   CardHeaderProps,
   CardImageProps,
