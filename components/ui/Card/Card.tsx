@@ -118,13 +118,7 @@ export function Card({
       {children}
     </View>
   );
-// Badge container absolute
-  rarityBadgeContainer: {
-    position: 'absolute',
-    top: 12,
-    right: 12,
-    zIndex: 10,
-  },
+
 
   if (onPress) {
     return (
